@@ -20,20 +20,66 @@
 using namespace std;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
-	// TODO: Set the number of particles. Initialize all particles to first position (based on estimates of 
-	//   x, y, theta and their uncertainties from GPS) and all weights to 1. 
-	// Add random Gaussian noise to each particle.
-	// NOTE: Consult particle_filter.h for more information about this method (and others in this file).
-	num_particles = 0;  // TODO: Set the number of particles
-
+    
+    // Set number of particles
+    num_particles = 1000;  // TODO: Set the number of particles
+    
+    // Initialize all particles based on x, y, theta estimate
+    for(size_t p = 0; p<num_particles; p++) {
+        Particle particle = Particle();
+        particle.id = int(p);
+        particle.x = x;
+        particle.y = y;
+        particle.t = theta;
+        particle.weight = 1.0;
+        particles.push_back(particle);
+    }
+    
+    // Random Engine initialization
+    default_random_engine generator;
+    auto& std_x = std[0];
+    auto& std_y = std[1];
+    auto& std_t = std[2];
+    std::normal_distribution<double> dist_x(0, std_x);
+    std::normal_distribution<double> dist_y(0, std_y);
+    std::normal_distribution<double> dist_t(0, std_t);
+    
+    // Add Gaussian noise based on GPS uncertainties
+    for(auto& p : particles) {
+        p.x += dist_x(generator);
+        p.y += dist_y(generator);
+        p.t += dist_t(generator);
+    }
+    
+    is_initialized = true;
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
-	// TODO: Add measurements to each particle and add random Gaussian noise.
-	// NOTE: When adding noise you may find std::normal_distribution and std::default_random_engine useful.
-	//  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
-	//  http://www.cplusplus.com/reference/random/default_random_engine/
-
+    
+    // Setting up Random Engine
+    default_random_engine generator;
+    auto& std_x = std_pos[0];
+    auto& std_y = std_pos[1];
+    auto& std_t = std_pos[2];
+    std::normal_distribution<double> dist_x(0, std_x);
+    std::normal_distribution<double> dist_y(0, std_y);
+    std::normal_distribution<double> dist_t(0, std_t);
+    
+    // Predicting particles
+    for(auto& p : particles) {
+        double dx, dy, dt = 0;
+        if(yaw_rate == 0) {
+            dx = velocity * cos(p.t) * delta_t;
+            dy = velocity * sin(p.t) * delta_t;
+        } else {
+            dt = yaw_rate * delta_t;
+            dx = (velocity/yaw_rate) * (sin(p.t+dt) - sin(p.t));
+            dy = (velocity/yaw_rate) * (cos(p.t) - cos(p.t+dt));
+        }
+        p.x += dx + dist_x(generator);
+        p.y += dy + dist_y(generator);
+        p.t += dt + dist_t(generator);
+    }
 }
 
 void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::vector<LandmarkObs>& observations) {
@@ -41,7 +87,9 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 	//   observed measurement to this particular landmark.
 	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
 	//   implement this method and use it as a helper during the updateWeights phase.
-
+    
+    // Nearest neighbor based map landmarks with threshold
+    
 }
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
@@ -56,6 +104,18 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
+    
+    for(auto& p : particles) {
+        // Aliases for convenience
+        auto& x = p.x;
+        auto& y = p.y;
+        auto& t = p.t;
+        
+        // Predict map_landmarks per particle
+        // Transform to map coordinate frame
+        // Perform data_association
+        // Update weights before importance resampling
+    }
 }
 
 void ParticleFilter::resample() {
@@ -63,6 +123,7 @@ void ParticleFilter::resample() {
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
 
+    // Do based on cumulative sum based sampling
 }
 
 void ParticleFilter::SetAssociations(Particle& particle, const std::vector<int>& associations, 

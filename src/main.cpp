@@ -126,7 +126,7 @@ int main() {
           json msgJson;
           msgJson["best_particle_x"] = best_particle.x;
           msgJson["best_particle_y"] = best_particle.y;
-          msgJson["best_particle_theta"] = best_particle.theta;
+          msgJson["best_particle_theta"] = best_particle.t;
 
           //Optional message data used for debugging particle's sensing and associations
           msgJson["best_particle_associations"] = pf.getAssociations(best_particle);
