@@ -14,18 +14,28 @@
 #include <sstream>
 #include <string>
 #include <iterator>
+#include <map>
 
 #include "particle_filter.h"
 
 using namespace std;
 
+static double normal_pdf(double mean, double sigma, double x) {
+    return (1/(sqrt(2*M_PI)*sigma))*exp(-pow(x-mean,2)/(2*sigma*sigma));
+}
+
+static double bivariate_norm_pdf(double mx, double my, double sx, double sy, double x, double y) {
+    return normal_pdf(mx, sx, x)*normal_pdf(my, sy, y);
+}
+
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
     
     // Set number of particles
-    num_particles = 1000;  // TODO: Set the number of particles
+    num_particles = 100;  // TODO: Set the number of particles
     
     // Initialize all particles based on x, y, theta estimate
     for(size_t p = 0; p<num_particles; p++) {
+        
         Particle particle = Particle();
         particle.id = int(p);
         particle.x = x;
@@ -46,6 +56,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
     
     // Add Gaussian noise based on GPS uncertainties
     for(auto& p : particles) {
+        
         p.x += dist_x(generator);
         p.y += dist_y(generator);
         p.t += dist_t(generator);
@@ -67,6 +78,7 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
     
     // Predicting particles
     for(auto& p : particles) {
+        
         double dx, dy, dt = 0;
         if(yaw_rate == 0) {
             dx = velocity * cos(p.t) * delta_t;
@@ -89,7 +101,20 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 	//   implement this method and use it as a helper during the updateWeights phase.
     
     // Nearest neighbor based map landmarks with threshold
-    
+    for(auto& obs : observations) {
+        
+        double min_dist = __DBL_MAX__;
+        int id;
+        for(auto& pred : predicted) {
+            
+            double dist = sqrt(pow(pred.x - obs.x,2) + pow(pred.y - obs.y,2));
+            if(dist < min_dist) {
+                id = pred.id;
+                min_dist = dist;
+            }
+        }
+        obs.id = id;
+    }
 }
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
@@ -105,16 +130,53 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
     
+    // Aliases for landmark stds
+    double& std_x = std_landmark[0];
+    double& std_y = std_landmark[1];
+    
     for(auto& p : particles) {
-        // Aliases for convenience
-        auto& x = p.x;
-        auto& y = p.y;
-        auto& t = p.t;
         
-        // Predict map_landmarks per particle
-        // Transform to map coordinate frame
-        // Perform data_association
+        // Prune landmarks based on proximity to particle location
+        std::vector<LandmarkObs> pruned_lm_list;
+        std::map<int, LandmarkObs> pruned_lm_map;
+        for(auto& lm : map_landmarks.landmark_list) {
+            // Eliminate landmarks based on sensor range (equivalent of camera frustum)
+            
+            double dx = lm.x_f - p.x;
+            double dy = lm.y_f - p.y;
+            double dist = sqrt(dx*dx + dy*dy);
+            
+            if(dist < sensor_range) {
+                LandmarkObs landmark;
+                landmark.x = lm.x_f;
+                landmark.y = lm.y_f;
+                landmark.id = lm.id_i;
+                
+                pruned_lm_list.push_back(landmark);
+                pruned_lm_map[lm.id_i] = landmark;
+            }
+        }
+        
+        // Transform observations to map frome
+        std::vector<LandmarkObs> observations_map_frame;
+        for(auto& obs : observations) {
+            double tx = obs.x * cos(p.t) - obs.y * sin(p.t) + p.x;
+            double ty = obs.x * sin(p.t) + obs.y * cos(p.t) + p.y;
+            LandmarkObs tf_obs;
+            tf_obs.id = -1;
+            tf_obs.x = tx;
+            tf_obs.y = ty;
+            observations_map_frame.push_back(tf_obs);
+        }
+        dataAssociation(pruned_lm_list, observations_map_frame);
+        
         // Update weights before importance resampling
+        double w = 1;
+        for(auto& ao : observations_map_frame) {
+            auto lm = pruned_lm_map[ao.id];
+            w *= bivariate_norm_pdf(lm.x, lm.y, std_x, std_y, ao.x, ao.y);
+        }
+        p.weight = w;
     }
 }
 
@@ -123,7 +185,50 @@ void ParticleFilter::resample() {
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
 
-    // Do based on cumulative sum based sampling
+    // Sum total of weights
+    double total_weight = 0.0;
+    for(auto& p : particles) {
+        total_weight += p.weight;
+    }
+    
+    // Normalized weights
+    for(auto& p : particles) {
+        p.weight /= total_weight;
+    }
+    
+    // Generate cumulative weights
+    std::vector<double> cumulative_weights;
+    double prev = 0.0;
+    for(auto& p : particles) {
+        double current_cw = prev + p.weight;
+        cumulative_weights.push_back(current_cw);
+        prev = current_cw;
+    }
+    cumulative_weights.back() = 1.0;
+    
+    // Resample
+    std::vector<Particle> new_particles;
+    default_random_engine generator;
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+    for(size_t i = 0; i < num_particles; ++i) {
+        double random_num = uni(generator);
+        int count = 0;
+        for(auto cw : cumulative_weights) {
+            if(cw > random_num) {
+                auto& sample = particles[count];
+                sample.weight = 1.0;
+                new_particles.push_back(sample);
+                break;
+            }
+            count++;
+        }
+        auto& sample = particles[num_particles];
+        sample.weight = 1.0;
+        new_particles.push_back(sample);
+        
+    }
+    std::swap(new_particles, particles);
+    
 }
 
 void ParticleFilter::SetAssociations(Particle& particle, const std::vector<int>& associations, 
